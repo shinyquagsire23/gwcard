@@ -14,5 +14,6 @@
 
 void gwcard_cmd_led(u32 color);
 void gwcard_cmd_read(u32 sector, u32 length, u32 blocks, void* buffer);
+void gwcard_cmd_write(u32 sector, u32 blocks, void* buffer);
 
 #endif
