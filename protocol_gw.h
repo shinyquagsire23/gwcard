@@ -1,18 +1,13 @@
 /*
- * Copyright (c) 2015-2016, SALT.
+ * Copyright (c) 2015-2020, SALT.
  * This file is licensed under GPLv2 or later
  * See LICENSE.md for terms of use.
  */
- 
+
 #ifndef _PROTOCOL_GW_H
 #define _PROTOCOL_GW_H
 
 #include "common.h"
-
-#include "protocol.h"
-void ResetCartSlot();
-void SwitchToNTRCARD();
-void SwitchToCTRCARD();
 
 #include "protocol_ntr.h"
 #include "command_ntr.h"

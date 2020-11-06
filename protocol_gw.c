@@ -1,32 +1,37 @@
 /*
- * Copyright (c) 2015-2016, SALT.
+ * Copyright (c) 2015-2020, SALT.
  * This file is licensed under GPLv2 or later
  * See LICENSE.md for terms of use.
  */
- 
+
 #include "protocol_gw.h"
 
+#include "fs.h"
+#include "hid.h"
+#include "draw.h"
+#include "utils.h"
+
+#include "config.h"
 #include "command_gw.h"
-#include "delay.h"
 
 bool gwcard_status = false;
- 
+
 bool gwcard_init()
 {
     if(gwcard_init_status())
         return true;
-        
+
     u8* gw_data_out = malloc(gw_magic_size);
 
     //Give the cart 8 maximum tries to respond properly.
     for(int tries = 0; tries < 8; tries++)
     {
-        ResetCartSlot();
+        reset_card_slot();
 
         REG_CTRCARDSECCNT &= 0xFFFFFFFB;
         ioDelay(0x4000);
 
-        SwitchToNTRCARD();
+        switch_to_ntrcard();
         ioDelay(0x4000);
 
         REG_NTRCARDROMCNT = 0;
@@ -36,25 +41,27 @@ bool gwcard_init()
         REG_NTRCARDMCNT |= (NTRCARD_CR1_ENABLE | NTRCARD_CR1_IRQ);
         REG_NTRCARDROMCNT = NTRCARD_nRESET | NTRCARD_SEC_SEED;
         while (REG_NTRCARDROMCNT & NTRCARD_BUSY);
-        
+
         // Reset and check card id
-        NTR_CmdReset();
-        if(NTR_CmdGetCartId() != 0xFFFFFFFF)
+        ntrcard_cmd_reset();
+        if(ntrcard_cmd_get_card_id() != 0xFFFFFFFF)
         {
             free(gw_data_out);
+            if(card_is_ctrcard())
+                ctrcard_init();
             return false;
         }
 
         //Mystery SPI upload
         REG_NTRCARDMCNT = /*E*/0x8000 | /*SEL*/0x2000 | /*MODE*/0x40;
         while (REG_NTRCARDMCNT & CARD_SPI_BUSY);
-        
+
         for(int i = 0; i < gw_magic_size; i++)
         {
             REG_NTRCARDMDATA = gw_magic[i];
             while (REG_NTRCARDMCNT & CARD_SPI_BUSY);
             gw_data_out[i] = REG_NTRCARDMDATA;
-            
+
             if(i == 0x4)
             {
                 //It's not returning proper data, abort.
@@ -65,58 +72,47 @@ bool gwcard_init()
                 }
             }
         }
-        
+
         //Keep pinging the cart with A0 commands until it returns 0
         int a0_response = -1;
         int j = 0;
         for(j = 0; j < 0x100; j++)
         {
             u32 unknowna0_cmd[2] = {0xA0000000, 0x00000000};
-            NTR_SendCommand(unknowna0_cmd, 0x4, 0, &a0_response);
+            ntrcard_send_command(unknowna0_cmd, 0x4, 0, &a0_response);
             if(!a0_response)
                 break;
         }
-        
-        NTR_CmdGetCartId();
-        
+
+        ntrcard_cmd_get_card_id();
+
         //It either maxed out or it's not a GW cart
         if((j == 0x100 && tries == 7) || (j == 0 && tries == 0))
         {
             free(gw_data_out);
+            if(card_is_ctrcard())
+                ctrcard_init();
             return false;
         }
         else if(j == 0x100 && tries != 7)
             continue;
-        
+
         break;
     }
     free(gw_data_out);
-    
-    //Mystery cart ID stuff
+
+    //Mystery BC command stuff
     REG_NTRCARDROMCNT = NTRCARD_ACTIVATE | NTRCARD_WR | NTRCARD_nRESET | NTRCARD_CLK_SLOW | NTRCARD_BLK_SIZE(1) | NTRCARD_DELAY2(0x18);
-    u32 cardid_bc_cmd[2] = {0xBC000000, 0xFFFFFFFF};
-    
-    //Write command into registers
-    REG_NTRCARDMCNT = NTRCARD_CR1_ENABLE | NTRCARD_CR1_IRQ;
-    u32 i;
-    for(i = 0; i < 2; ++i)
-    {
-        REG_NTRCARDCMD[i * 4 + 0] = cardid_bc_cmd[i] >> 24;
-        REG_NTRCARDCMD[i * 4 + 1] = cardid_bc_cmd[i] >> 16;
-        REG_NTRCARDCMD[i * 4 + 2] = cardid_bc_cmd[i] >> 8;
-        REG_NTRCARDCMD[i * 4 + 3] = cardid_bc_cmd[i] >> 0;
-    }
-    
-    //Poll FIFO 128 times
+    ntrcard_write_command((u8*)((u32[2]){0xBC000000, 0xFFFFFFFF}));
     REG_NTRCARDFIFO = 0xFFFFFFFF;
     for(int i = 0; i < 127; i++)
     {
         while (!(REG_NTRCARDROMCNT & NTRCARD_DATA_READY));
         REG_NTRCARDFIFO = 0x0;
     }
-    
-    NTR_CmdEnter16ByteMode();
-    SwitchToCTRCARD();
+
+    ntrcard_cmd_enter_16byte_mode();
+    switch_to_ctrcard();
     ioDelay(0xF000);
 
     REG_CTRCARDBLKCNT = 0;
@@ -131,6 +127,9 @@ void gwcard_deinit()
 
 bool gwcard_init_status()
 {
+    if(gwcard_status)
+        gwcard_status = (REG_CFG_CARDCONF2 & 0x8) == 0x8;
+
     return gwcard_status;
 }
 
